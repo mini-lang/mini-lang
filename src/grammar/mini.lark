@@ -20,8 +20,8 @@ start: _NL* program? _NL*
 
 program: statement (_NL+ statement)*
 
-?statement: function_decl
-          | class_decl
+?statement: class_decl
+          | function_decl
           | enum_decl
           | assignment
           | return_stmt
@@ -56,7 +56,7 @@ assignment: lvalue ASSIGN_OP expr
 ?lvalue: NAME lvalue_suffix*
 
 lvalue_suffix: "." NAME
-             | "[" expr "]"
+             | "[" value_expr "]"
 
 return_stmt: "return" expr?
 
@@ -131,10 +131,10 @@ type_path: NAME ("." NAME)*
 ?if_expr: matched_if
         | unmatched_if
 
-matched_if: "if" expr matched_body else_separator matched_body
+matched_if: "if" value_expr matched_body else_separator matched_body
 
-unmatched_if: "if" expr any_body
-            | "if" expr matched_body else_separator unmatched_if
+unmatched_if: "if" value_expr any_body
+            | "if" value_expr matched_body else_separator unmatched_if
 
 // A matched body can contain only a fully matched nested if.
 ?matched_body: ":" matched_inline_expr   -> inline_body
@@ -175,14 +175,14 @@ else_separator: "else" | ELSE_NL
 //     for x in values {
 //         print(x)
 //     }
-for_expr: "for" pattern "in" expr loop_body
+for_expr: "for" pattern "in" value_expr loop_body
 
 //     while running: tick()
 //
 //     while running {
 //         tick()
 //     }
-while_expr: "while" expr loop_body
+while_expr: "while" value_expr loop_body
 
 ?loop_body: ":" inline_expr               -> inline_body
           | block                         -> block_body
@@ -211,8 +211,8 @@ while_expr: "while" expr loop_body
 //     | None => 0
 // ============================================================================
 
-match_expr: "match" expr ":" inline_match_arms
-          | "match" expr ":" NL_PIPE multiline_match_arms
+match_expr: "match" value_expr ":" inline_match_arms
+          | "match" value_expr ":" NL_PIPE multiline_match_arms
 
 inline_match_arms: match_arm ("|" match_arm)*
 
@@ -220,7 +220,7 @@ multiline_match_arms: match_arm (NL_PIPE match_arm)*
 
 match_arm: pattern match_guard? "=>" match_result
 
-match_guard: "if" expr
+match_guard: "if" value_expr
 
 ?match_result: block
              | inline_expr
@@ -232,9 +232,13 @@ match_guard: "if" expr
 
 //     (x) => x * x
 //     (x, y) => x + y
-//     (x) => { print(x); x * x }     // semicolon shown only as prose;
-//                                    // use a newline in actual mini code
-lambda_expr: parameters "=>" lambda_body
+//     x => x + 1            // single argument, no parentheses
+//     (x) => { print(x)     // block body (use newlines, not semicolons)
+//     x * x }
+lambda_expr: lambda_params "=>" lambda_body
+
+lambda_params: NAME
+             | parameters
 
 ?lambda_body: block
             | inline_expr
@@ -285,12 +289,23 @@ lambda_expr: parameters "=>" lambda_body
 ?postfix: primary postfix_suffix*
 
 postfix_suffix: arguments
-              | "[" expr "]"
+              | index_or_slice
               | "." NAME
+
+// Indexing and slicing:
+//
+//     values[0]        // element access
+//     values[1:4]      // slice, start inclusive
+//     values[1:4:2]    // slice with step
+//     values[:4]       // slice, implicit start
+//     values[1:]       // slice, implicit end
+index_or_slice: "[" _NL* (slice_expr | value_expr) _NL* "]"
+
+slice_expr: value_expr? ":" value_expr? (":" value_expr?)?
 
 arguments: "(" _NL* expression_list? _NL* ")"
 
-expression_list: expr (_NL* "," _NL* expr)* _NL* ","?
+expression_list: value_expr (_NL* "," _NL* value_expr)* _NL* ","?
 
 parameters: "(" _NL* pattern_list? _NL* ")"
 
@@ -318,7 +333,7 @@ map_literal: "#{" _NL* map_entries? _NL* "}"
 
 map_entries: map_entry (_NL* "," _NL* map_entry)* _NL* ","?
 
-map_entry: map_key ":" expr
+map_entry: map_key ":" value_expr
 
 ?map_key: NAME
         | literal
@@ -330,10 +345,10 @@ map_entry: map_key ":" expr
 //     (x,)
 //     (x, y)
 tuple_or_group: "(" _NL* ")"                                  -> unit
-              | "(" _NL* expr _NL* ")"                        -> grouped
-              | "(" _NL* expr _NL* "," tuple_tail? _NL* ")"  -> tuple
+              | "(" _NL* value_expr _NL* ")"                -> grouped
+              | "(" _NL* value_expr _NL* "," tuple_tail? _NL* ")"  -> tuple
 
-tuple_tail: expr (_NL* "," _NL* expr)* _NL* ","?
+tuple_tail: value_expr (_NL* "," _NL* value_expr)* _NL* ","?
 
 
 /* ============================================================================
