@@ -12,7 +12,7 @@ from typing import Callable
 from .evaluator import evaluate_call
 
 from .environment import Environment
-from .atoms import Atom, BuiltinFunctionAtom, Atom, IntrinsicAtom, ValueAtom
+from .atoms import Atom, BuiltinFunctionAtom, IntrinsicAtom, ValueAtom
 
 # Helper functions
 def addBuiltin(name, func: Callable[[list[Atom]], Atom], env: Environment):
