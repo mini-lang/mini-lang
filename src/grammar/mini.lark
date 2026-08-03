@@ -1,0 +1,424 @@
+// ============================================================================
+// mini.lark
+//
+// Design:
+// - Newlines terminate top-level/block expressions; semicolons are unsupported.
+// - Leading indentation is ignored: this is NOT indentation-sensitive.
+// - `:` introduces one inline expression.
+// - `{ ... }` introduces a multi-expression value block.
+// - `if` else binds to the nearest unmatched if.
+// - `match` never uses braces around its case list.
+// - Individual match arms may use `=> { ... }`.
+// ============================================================================
+
+
+// ============================================================================
+// Program structure
+// ============================================================================
+
+start: _NL* program? _NL*
+
+program: statement (_NL+ statement)*
+
+?statement: function_decl
+          | class_decl
+          | enum_decl
+          | assignment
+          | return_stmt
+          | "break"                         -> break_stmt
+          | "continue"                      -> continue_stmt
+          | expr
+
+// A block evaluates to its final expression, unless control flow exits it.
+block: "{" _NL* program? _NL* "}"
+
+
+// ============================================================================
+// Declarations and assignment
+// ============================================================================
+
+// Named function declaration:
+//     add(x, y) = x + y
+//     greet(name) { "Hello, " + name }
+function_decl: NAME parameters ("=" expr | block)
+
+// Assignment:
+//     x = 10
+//     user.name = "Ada"
+//     values[0] += 1
+assignment: lvalue ASSIGN_OP expr
+
+// Calls are deliberately excluded from lvalues. Therefore:
+//
+//     f(x) = x + 1
+//
+// is always a function declaration, not an assignment to a call result.
+?lvalue: NAME lvalue_suffix*
+
+lvalue_suffix: "." NAME
+             | "[" expr "]"
+
+return_stmt: "return" expr?
+
+
+// ============================================================================
+// Enum and class declarations
+// ============================================================================
+
+//     enum Option = Some(value) | None
+enum_decl: "enum" NAME "=" enum_variant ("|" enum_variant)*
+
+enum_variant: NAME parameters?
+
+// Class declaration:
+//
+//     class Animal {
+//         init(name) { this.name = name }
+//         speak() = this.name + " says hello"
+//     }
+//
+// Optional inheritance:
+//
+//     class Dog : Animal { ... }
+class_decl: "class" NAME inheritance? class_block
+
+inheritance: ":" type_path
+
+class_block: "{" _NL* class_members? _NL* "}"
+
+class_members: class_member (_NL+ class_member)*
+
+?class_member: method_decl
+             | init_decl
+             | assignment
+
+method_decl: NAME parameters ("=" expr | block)
+
+init_decl: "init" parameters block
+
+type_path: NAME ("." NAME)*
+
+
+// ============================================================================
+// Expressions
+// ============================================================================
+
+?expr: if_expr
+     | match_expr
+     | for_expr
+     | while_expr
+     | lambda_expr
+     | value_expr
+
+
+// ============================================================================
+// If / else
+//
+// The matched/unmatched split encodes the standard nearest-if rule:
+//
+//     if a: if b: x
+//     else: y
+//
+// attaches `else: y` to `if b`, not `if a`.
+//
+// To attach an else to the outer if, use a block:
+//
+//     if a {
+//         if b: x
+//     } else: y
+// ============================================================================
+
+?if_expr: matched_if
+        | unmatched_if
+
+matched_if: "if" expr matched_body else_separator matched_body
+
+unmatched_if: "if" expr any_body
+            | "if" expr matched_body else_separator unmatched_if
+
+// A matched body can contain only a fully matched nested if.
+?matched_body: ":" matched_inline_expr   -> inline_body
+             | block                     -> block_body
+
+// An unmatched body may contain any expression, including an if that still
+// awaits its own else.
+?any_body: ":" inline_expr               -> inline_body
+         | block                         -> block_body
+
+?matched_inline_expr: non_if_expr
+                    | matched_if
+
+?inline_expr: non_if_expr
+            | if_expr
+
+?non_if_expr: match_expr
+            | for_expr
+            | while_expr
+            | lambda_expr
+            | value_expr
+
+// `ELSE_NL` consumes a newline plus the following `else`, allowing:
+//
+//     if x: y
+//     else: z
+//
+// It has a higher lexical priority than `_NL`.
+else_separator: "else" | ELSE_NL
+
+
+// ============================================================================
+// Loops
+// ============================================================================
+
+//     for x in [1, 2, 3]: print(x)
+//
+//     for x in values {
+//         print(x)
+//     }
+for_expr: "for" pattern "in" expr loop_body
+
+//     while running: tick()
+//
+//     while running {
+//         tick()
+//     }
+while_expr: "while" expr loop_body
+
+?loop_body: ":" inline_expr               -> inline_body
+          | block                         -> block_body
+
+
+// ============================================================================
+// Match
+//
+// One line:
+//
+//     match value: Some(n) => n | None => 0
+//
+// Multiple lines, without indentation significance:
+//
+//     match value:
+//     | Some(n) => n
+//     | None => 0
+//
+// An individual case may contain a block:
+//
+//     match value:
+//     | Some(n) => {
+//         print(n)
+//         n * 2
+//       }
+//     | None => 0
+// ============================================================================
+
+match_expr: "match" expr ":" inline_match_arms
+          | "match" expr ":" NL_PIPE multiline_match_arms
+
+inline_match_arms: match_arm ("|" match_arm)*
+
+multiline_match_arms: match_arm (NL_PIPE match_arm)*
+
+match_arm: pattern match_guard? "=>" match_result
+
+match_guard: "if" expr
+
+?match_result: block
+             | inline_expr
+
+
+// ============================================================================
+// Lambda expressions
+// ============================================================================
+
+//     (x) => x * x
+//     (x, y) => x + y
+//     (x) => { print(x); x * x }     // semicolon shown only as prose;
+//                                    // use a newline in actual mini code
+lambda_expr: parameters "=>" lambda_body
+
+?lambda_body: block
+            | inline_expr
+
+
+// ============================================================================
+// Operators and precedence
+// ============================================================================
+
+// `or` has the lowest precedence, then `and`.
+//
+//     a or b and c
+//
+// parses as:
+//
+//     a or (b and c)
+?value_expr: logic_or
+
+?logic_or: logic_and ("or" logic_and)*
+
+?logic_and: equality ("and" equality)*
+
+?equality: comparison (("==" | "!=") comparison)*
+
+?comparison: range_expr (("<" | "<=" | ">" | ">=") range_expr
+                       | "is" pattern
+                       | "in" range_expr)*
+
+?range_expr: sum (RANGE sum?)?
+
+?sum: product (("+" | "-") product)*
+
+?product: unary (("*" | "/" | "%") unary)*
+
+?unary: ("!" | "-" | "+") unary
+      | postfix
+
+
+// ============================================================================
+// Calls, member access, indexing
+// ============================================================================
+
+// Examples:
+//
+//     f(x, y)
+//     users[0].name
+//     make_user("Ada").display()
+?postfix: primary postfix_suffix*
+
+postfix_suffix: arguments
+              | "[" expr "]"
+              | "." NAME
+
+arguments: "(" _NL* expression_list? _NL* ")"
+
+expression_list: expr (_NL* "," _NL* expr)* _NL* ","?
+
+parameters: "(" _NL* pattern_list? _NL* ")"
+
+pattern_list: pattern (_NL* "," _NL* pattern)* _NL* ","?
+
+
+// ============================================================================
+// Primary expressions and collections
+// ============================================================================
+
+?primary: literal
+        | list_literal
+        | map_literal
+        | tuple_or_group
+        | NAME
+
+list_literal: "[" _NL* expression_list? _NL* "]"
+
+// Maps:
+//
+//     #{ name: "Ada", age: 37 }
+//
+// Keys may be identifiers or literal values.
+map_literal: "#{" _NL* map_entries? _NL* "}"
+
+map_entries: map_entry (_NL* "," _NL* map_entry)* _NL* ","?
+
+map_entry: map_key ":" expr
+
+?map_key: NAME
+        | literal
+
+// Unit, tuple, or grouped expression:
+//
+//     ()
+//     (x)
+//     (x,)
+//     (x, y)
+tuple_or_group: "(" _NL* ")"                                  -> unit
+              | "(" _NL* expr _NL* ")"                        -> grouped
+              | "(" _NL* expr _NL* "," tuple_tail? _NL* ")"  -> tuple
+
+tuple_tail: expr (_NL* "," _NL* expr)* _NL* ","?
+
+
+/* ============================================================================
+   Patterns
+
+   Used in `match`, `for`, lambda parameters, function parameters, and `is`.
+
+       _
+       x
+       Some(value)
+       Point(x, y)
+       [head | tail]
+       [first, second | rest]
+       #{ name: name, age: age }
+       (x, y)
+   ============================================================================ */
+
+?pattern: "_"                              -> wildcard_pattern
+        | literal                          -> literal_pattern
+        | variant_path pattern_arguments?  -> name_pattern
+        | list_pattern
+        | map_pattern
+        | tuple_pattern
+
+variant_path: NAME ("." NAME)*
+
+pattern_arguments: "(" _NL* pattern_list? _NL* ")"
+
+list_pattern: "[" _NL* "]"                                      -> empty_list_pattern
+            | "[" _NL* pattern (_NL* "," _NL* pattern)*
+                (_NL* "|" _NL* pattern)? _NL* "]"               -> list_pattern
+
+map_pattern: "#{" _NL* map_pattern_entries? _NL* "}"
+
+map_pattern_entries: map_pattern_entry
+                     (_NL* "," _NL* map_pattern_entry)* _NL* ","?
+
+map_pattern_entry: map_key ":" pattern
+
+tuple_pattern: "(" _NL* ")"                                    -> unit_pattern
+             | "(" _NL* pattern _NL* ","
+               tuple_pattern_tail? _NL* ")"                    -> tuple_pattern
+
+tuple_pattern_tail: pattern (_NL* "," _NL* pattern)* _NL* ","?
+
+
+// ============================================================================
+// Literals
+// ============================================================================
+
+?literal: NUMBER
+        | STRING
+        | "true"                         -> true
+        | "false"                        -> false
+        | "none"                         -> none
+
+
+// ============================================================================
+// Lexer
+// ============================================================================
+
+// Consumes a line break followed by optional horizontal whitespace and `else`.
+// Priority makes this win over `_NL` at the same position.
+ELSE_NL.10: /(?:\r?\n[ \t]*)+else\b/
+
+// Consumes a line break followed by optional horizontal whitespace and `|`.
+// Used only to continue a multiline match.
+NL_PIPE.10: /(?:\r?\n[ \t]*)+\|/
+
+RANGE.10: ".."
+
+ASSIGN_OP: "=" | "+=" | "-=" | "*=" | "/=" | "%="
+
+NUMBER: /(?:0|[1-9][0-9]*)(?:\.[0-9]+)?/
+
+STRING: /"(?:\\.|[^"\\\r\n])*"/
+      | /'(?:\\.|[^'\\\r\n])*'/
+
+NAME: /[A-Za-z_][A-Za-z0-9_]*/
+
+// `_NL` is intentionally not ignored: it terminates expressions.
+_NL: /(?:\r?\n)+/
+
+// Ignore horizontal space, but never newlines.
+%ignore /[ \t\f]+/
+
+// Single-line comments do not consume their terminating newline.
+%ignore /\/\/[^\r\n]*/
