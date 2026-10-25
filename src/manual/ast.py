@@ -7,6 +7,11 @@ class Node():
         Initialize a node with a name
         """
         self.name = name
+        self.location = None
+
+    def at(self, token):
+        self.location = token
+        return self
 
     def __str__(self):
         return self.formatted_str()
