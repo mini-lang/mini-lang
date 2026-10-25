@@ -1,5 +1,5 @@
 from .atoms import Atom, BuiltinFunctionAtom, FunctionAtom, ValueAtom
-from .ast import AtomicNode, BinaryNode, BlockNode, IfNode, LambdaNode, ListNode, MapNode, Node, ProgramNode, SliceNode, TupleNode, UnaryNode
+from .ast import AtomicNode, BinaryNode, BlockNode, IfNode, LambdaNode, ListNode, MapNode, Node, ProgramNode, SliceNode, TupleNode, UnaryNode, WhileNode, ForNode, ControlNode
 from .environment import Environment
 
 # Global variables
@@ -78,6 +78,34 @@ def set_nested_value(obj: ValueAtom, path: list[str], rhs: Atom) -> ValueAtom:
         obj.value[path[0]] = set_nested_value(obj.value[path[0]], path[1:], rhs)
         return obj
 
+class LoopControl(Exception):
+    def __init__(self, kind: str):
+        self.kind = kind
+
+
+class ReturnControl(Exception):
+    def __init__(self, value: Atom):
+        self.value = value
+
+
+def condition_value(expression: Node, env: Environment) -> bool:
+    value = evaluate_expression(expression, env)
+    if not isinstance(value, ValueAtom) or value.type != "bool":
+        raise Exception("Condition must evaluate to a bool")
+    return value.value
+
+
+def iteration_values(value: Atom):
+    if isinstance(value, ValueAtom):
+        if value.type in ["list", "tuple"]:
+            return iter(value.value)
+        if value.type in ["string", "map"]:
+            return (ValueAtom("string", item) for item in value.value)
+        if value.type == "unit":
+            return iter(())
+    raise Exception("For loop expects a list, tuple, string or map")
+
+
 # Evaluation functions
 
 def evaluate_expression(expression: Node, env: Environment) -> Atom:
@@ -117,21 +145,37 @@ def evaluate_expression(expression: Node, env: Environment) -> Atom:
     elif isinstance(expression, LambdaNode):
         return FunctionAtom(expression.params, expression.body, env)
     elif isinstance(expression, IfNode):
-        cond = evaluate_expression(expression.condition, env)
-        if not isinstance(cond, ValueAtom) or not cond.type == "bool":
-            raise Exception(f"Condition does not evaluate to a bool")
-        if cond.value:
+        if condition_value(expression.condition, env):
             return evaluate_expression(expression.ifBody, env)
-        else:
-            # Iterate over the else-ifs
-            for cond, body in expression.elseIfs:
-                cond = evaluate_expression(cond, env)
-                if not isinstance(cond, ValueAtom) or not cond.type == "bool":
-                    raise Exception(f"Condition does not evaluate to a bool")
-                if cond.value:
-                    return evaluate_expression(body, env)
-            # Evaluate the else body
+        for condition, body in expression.elseIfs:
+            if condition_value(condition, env):
+                return evaluate_expression(body, env)
+        if expression.elseBody is not None:
             return evaluate_expression(expression.elseBody, env)
+        return ValueAtom("unit", None)
+    elif isinstance(expression, WhileNode):
+        while condition_value(expression.condition, env):
+            try:
+                evaluate_expression(expression.body, Environment("<while>", env))
+            except LoopControl as signal:
+                if signal.kind == "break":
+                    break
+        return ValueAtom("unit", None)
+    elif isinstance(expression, ForNode):
+        values = iteration_values(evaluate_expression(expression.iterable, env))
+        for value in values:
+            iteration = Environment("<for>", env)
+            iteration.define(expression.variable, value)
+            try:
+                evaluate_expression(expression.body, iteration)
+            except LoopControl as signal:
+                if signal.kind == "break":
+                    break
+        return ValueAtom("unit", None)
+    elif isinstance(expression, ControlNode):
+        if expression.kind == "return":
+            raise ReturnControl(evaluate_expression(expression.value, env))
+        raise LoopControl(expression.kind)
     elif isinstance(expression, UnaryNode):
         op = expression.operator
         rhs = evaluate_expression(expression.rhs, env)
@@ -199,6 +243,17 @@ def evaluate_expression(expression: Node, env: Environment) -> Atom:
                     raise Exception(f"Map does not contain key '{expression.right.value}'")
                 return lhs.value[expression.right.value]
             raise Exception(f"Cannot access member of {lhs.type}, not implemented yet")
+        elif op == "CALL":
+            # Preserve argument boundaries: f((1, 2)) has one tuple argument.
+            args = [evaluate_expression(arg, env) for arg in expression.right.elements]
+            return evaluate_call(lhs, args)
+        elif op in ["AND", "OR"]:
+            compatible_type(lhs, ["bool"])
+            if (op == "AND" and not lhs.value) or (op == "OR" and lhs.value):
+                return lhs
+            rhs = evaluate_expression(expression.right, env)
+            compatible_type(rhs, ["bool"])
+            return rhs
         elif op == "INDEX" and isinstance(expression.right, SliceNode): # Slice indexing
             # Evaluate the slice indices
             start = evaluate_expression(expression.right.start, env)
@@ -305,16 +360,6 @@ def evaluate_binary_atom_expression(op: str, lhs: Atom, rhs: Atom, env: Environm
             return element
         else:
             raise Exception(f"Indexing expression does not evaluate to an integer or string")
-    elif op == "CALL":
-        # The tuple may have been evaluated to a single value
-        args = [rhs]
-        if isinstance(rhs, ValueAtom):
-            if rhs.type == "tuple":
-                args: list[Atom] = rhs.value
-            elif rhs.type == "unit":
-                args = []
-        # args = list(map(lambda e: evaluate_expression(e, env), rhs.value))
-        return evaluate_call(lhs, args)
 
     return None
 
@@ -333,8 +378,14 @@ def evaluate_function_atom_call(function: FunctionAtom, args: list[Atom]) -> Ato
     if len(args) != len(function.argumentNames):
         raise Exception(f"Function '{function.name}' expects {len(function.argumentNames)} arguments, but got {len(args)}")
     for name, val in zip(function.argumentNames, args):
-        funcEnv.set(name, val)
-    return evaluate_expression(function.body, funcEnv)
+        funcEnv.define(name, val)
+    try:
+        return evaluate_expression(function.body, funcEnv)
+    except ReturnControl as signal:
+        return signal.value
+    except LoopControl as signal:
+        # Defensive boundary for ASTs supplied through the embedding API.
+        raise Exception(f"'{signal.kind}' cannot cross a function boundary") from None
 
 def evaluate_expressions(expressions: list[Node], env: Environment) -> Atom:
     """

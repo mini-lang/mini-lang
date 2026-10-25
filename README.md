@@ -61,7 +61,9 @@ expressions. Comments use `//` or `/* ... */`.
 ### Blocks and functions
 
 A block evaluates to its last expression; an empty block evaluates to `()`.
-New names inside a block stay local. Functions capture their defining environment,
+New names inside a block stay local; assignment to an existing name updates its
+nearest enclosing binding. Function parameters always bind locally and shadow
+outer names. Functions capture their defining environment,
 accept fixed positional parameters, and return their body's value.
 
 ```mini
@@ -113,17 +115,58 @@ print(4..1)
 
 ### Control flow
 
-`if` is an expression with a boolean condition and optional `else`.
+`if` is an expression with a boolean condition and optional `else if` / `else`.
+A false `if` without an `else` evaluates to `()`. Boolean `and` and `or`
+short-circuit: they only evaluate the right operand when needed.
 
 ```mini
 x = 7
-label = if x >= 5 { "medium" } else { "small" }
+label = if x >= 10 { "large" } else if x >= 5 { "medium" } else { "small" }
 print(label)
 // => medium
 ```
 
-`while`, `for`, `break`, `continue` and function-only `return` are the remaining
-v1 work in the next change; see [the subset contract](docs/v1.md).
+`while` checks a boolean condition before each iteration. `for name in values`
+iterates list/tuple elements, string characters or map keys (in insertion order).
+The iterable is evaluated once. Both loops return `()`.
+
+```mini
+i = 0
+while i < 4 {
+    i += 1
+    if i == 2 { continue }
+    print(i)
+}
+for n in 1..5 {
+    if n == 3 { break }
+    print(n)
+}
+// => 1
+// => 3
+// => 4
+// => 1
+// => 2
+```
+
+Each iteration has a fresh local scope; the for variable shadows an outer name
+and does not leak. `break` and `continue` affect the nearest loop in the same
+function, including through nested blocks. Invalid control flow is rejected
+before execution, including in uncalled functions and unreachable branches.
+
+`return expression` exits the current function, including from inside loops.
+Use `return ()` for an explicit unit result. Return outside a function is an error;
+a plain block still evaluates to its final expression.
+
+```mini
+first_large(values) = {
+    for value in values {
+        if value > 5 { return value }
+    }
+    ()
+}
+print(first_large([1, 8, 9]), first_large([]))
+// => 8 ()
+```
 
 ## Development
 
