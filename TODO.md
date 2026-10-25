@@ -1,61 +1,29 @@
-# Todo list
-Below are some things that need to be done, as well as some ideas for future development.
+# TODO
 
-- [ ] Setting values on hash map objects.\
-	Example: `map[key] = value`
-- [ ] Propper error handling. Pretty printed errors with detailed information about the error location, type, and message. Take inspiration from other languages.
-- [ ] Function variations, variables that are assigned lambdas should have support for overloading with different signatures. Correct function should be found using pattern matching on the argument list or simply matching by the number of arguments passed to the function.
-- [ ] Implementing the `for` loop.
-- [ ] Implementing the `while` loop.
-- [ ] Implementing pattern matching with support for complex patterns.\
-	Examples:
-	- `if mystr is "hello" + rest` Checks if `mystr` starts with `hello` and then binds `rest` to the rest of the string if the pattern matches.
-	- `if num is number(n)` Checks if `num` is a number and then binds `n` to the number if the pattern matches.
-	- `if mymap is #{a: 1, b: c}` Checks if `mymap` is a hash map with keys `a` and `b` where the value of `a` is `1`, then binds `c` to the value of `b` if the pattern matches.
-	- `(a, b) = (1, 2)` Binds `a` to `1` and `b` to `2`.
-	- `(c, d, e) = tuple` Binds the tuple elements to `c`, `d` and `e` if it has the same number of elements.
-	- `[f, s | t] = [1, 2, 3, 4]` Binds `f` to `1`, `s` to `2`, and `t` to `[3, 4]`.
-- [ ] Implementing the `match` statement.
-- [ ] Implement enum types.
-- [ ] Implement atom types. (Atom types are types that can only be created once and cannot be changed.)\
-	Example: `atm = :hello_world` then `atm == :hello_world` is always true.
-- [ ] Unicode support for identifiers and atoms. (Strings already support unicode encodings)
-- [ ] More escape sequences for strings.
-- [ ] Expand standard library.
-	- [ ] Filesystem, open files and read/write contents.
-	- [ ] Networking.
-	- [ ] Time and date.
-	- [ ] Random numbers.
-	- [ ] Regular expressions.
-	- [ ] String formatting. `format("a={} b={}", a, b)` or similar.\
-		Is this a good idea to feature in the base language?
-	- [ ] Math, trigonometry, and other functions.
-	- [ ] Encoding/decoding.
-	- [ ] Encryption/decryption.
-	- [ ] Compression/decompression.
-	- [ ] Serialization/deserialization.
-	- [ ] Parse different file formats, like JSON, XML, YAML, etc.
-	- [ ] Console input/output with color and formatting support. (ANSI escape codes, etc.)
-	- [ ] More data structures such as linked lists, stacks, queues, sets, trees, hash tables, binary trees, and graphs.
-	- [ ] More algorithms such as sorting, searching, and hashing.
-	- [ ] Type casting functions for converting between types. `number("1.5")`, `string([])` or similar.
-- [ ] Implementing the `import` statement with support for relative paths.
-- [ ] Module system with import and export keywords.
-- [ ] Bootstrapping the language and writing a native compiler for it.
-- [ ] Implementing classes with support for inheritance, polymorphism and static methods.
+The [v1 capability matrix](docs/v1.md) distinguishes the active handwritten
+interpreter from the experimental Lark grammar. Grammar productions alone do not
+count as implemented features.
 
+## Educational v1
 
-### Future development
+- [x] Record supported syntax and run README examples automatically.
+- [x] Exercise every example file, including Unicode and scripted input.
+- [ ] Add `while`, `for`, scoped iteration variables, `break` and `continue` (#6).
+- [ ] Add function-only `return` and reject invalid control flow (#6).
+- [ ] Define assignment to enclosing scopes; preserve local parameters.
+- [ ] Fix false `if` without `else` and short-circuit boolean operators.
+- [ ] Report lexical, syntax and runtime errors with source locations.
+- [ ] Return nonzero CLI status on program errors; keep the REPL usable after errors.
+- [ ] Align the companion website/tutorial with verified v1 behavior.
 
-- [ ] Type system, incremental type checking, and type inference, or static typing.
-- [ ] Range indexing for lists and strings\
-	Examples:
-	- `list[0:2]` returns the first two elements of the list.
-	- `list[:-1]` returns the list without the last element.
-	- `list[1:]` returns the list without the first element.
+## Deferred beyond v1
 
-### Third-party tools
-This might be a good place to look if you are interested in contributing to the language ecosystem!
-
-- [ ] Documentation generator that parses the source code and generates documentation in markdown format or for the web.
-- [ ] Compiler for the language that compiles the source code to native machine code, LLVM, or for the web.
+- Classes, inheritance, enums, atom literals, sets and pattern matching (`match`,
+  `is`, destructuring, pattern parameters and for bindings).
+- Membership `in` outside a for header; additional compound/bitwise operators.
+- Open-ended/lazy ranges and slices with omitted bounds.
+- Function overloading, imports/modules, a type system and native compilation.
+- Adopt a Lark runtime only with an explicit syntax migration and parity tests.
+- Expand and validate the experimental host library (filesystem, networking,
+  encoding, random, time and additional collection helpers already exist).
+- Documentation generators, tooling and other interpreter backends.

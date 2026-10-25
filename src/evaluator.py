@@ -104,7 +104,7 @@ def evaluate_expression(expression: Node, env: Environment) -> Atom:
         for key, value in expression.pairs.items():
             if not isinstance(key, AtomicNode):
                 raise Exception(f"Key in map is not an atomic value")
-            if key.type == "number" and key.value.is_integer():
+            if key.type == "number" and (isinstance(key.value, int) or key.value.is_integer()):
                 key.value = int(key.value)
                 key.type = "integer"
             if key.type not in ["identifier", "string", "integer", "bool"]:
