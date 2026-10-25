@@ -1,6 +1,7 @@
 from .atoms import Atom, BuiltinFunctionAtom, FunctionAtom, ValueAtom
-from .ast import AtomicNode, BinaryNode, BlockNode, IfNode, LambdaNode, ListNode, MapNode, Node, ProgramNode, SliceNode, TupleNode, UnaryNode
+from .ast import AtomicNode, BinaryNode, BlockNode, IfNode, LambdaNode, ListNode, MapNode, Node, ProgramNode, SliceNode, TupleNode, UnaryNode, WhileNode, ForNode, ControlNode
 from .environment import Environment
+from .error import MiniError
 
 # Global variables
 debug = False
@@ -40,47 +41,70 @@ def compatible_type(value: Atom, types: list[str]) -> bool:
 def is_identifier(expression: Node) -> bool:
     return isinstance(expression, AtomicNode) and expression.type == "identifier"
 
-def is_identifier_members(expression: Node) -> bool:
-    return isinstance(expression, BinaryNode) and expression.operator == "DOT" and (
-        is_identifier(expression.left) or is_identifier_members(expression.left)
-    ) and is_identifier(expression.right)
+def integer_value(value: Atom, purpose: str) -> int:
+    if not isinstance(value, ValueAtom) or value.type != "number" or not isinstance(value.value, (int, float)):
+        raise Exception(f"{purpose} must be an integer")
+    try:
+        result = int(value.value)
+    except (ValueError, OverflowError):
+        raise Exception(f"{purpose} must be an integer") from None
+    if value.value != result:
+        raise Exception(f"{purpose} must be an integer")
+    return result
 
-def is_index_expression(expression: Node) -> bool:
-    return isinstance(expression, BinaryNode) and expression.operator == "INDEX"
 
-def get_left_most_bin_term(expression: Node, op: str) -> Node:
-    """
-    Get the base of a member expression.
-    """
-    if isinstance(expression, BinaryNode) and expression.operator == op:
-        return get_left_most_bin_term(expression.left, op)
-    else:
-        return expression
+def index_key(container: Atom, key: Atom):
+    if not isinstance(container, ValueAtom):
+        raise Exception("Only lists, tuples and maps support indexing")
+    if container.type in ["list", "tuple"]:
+        return integer_value(key, "Index")
+    if container.type == "map":
+        if not isinstance(key, ValueAtom) or key.type not in ["string", "number", "bool"]:
+            raise Exception("Map key must be a string, number or bool")
+        return key.raw_str()
+    raise Exception(f"Indexing {container.type} is not supported in v1")
 
-def flatten_bin_terms(expression: Node, op: str, includeBase: bool) -> list[str]:
-    """
-    Get the path of a member expression.
-    """
-    if isinstance(expression, BinaryNode) and expression.operator == op:
-        return flatten_bin_terms(expression.left, op, includeBase) + [expression.right.value]
-    else:
-        return [expression.value] if includeBase else []
 
-def set_nested_value(obj: ValueAtom, path: list[str], rhs: Atom) -> ValueAtom:
-    """
-    Set the value of a member expression.
-    """
-    if len(path) == 0: raise Exception("Member path is empty")
-    elif len(path) == 1:
-        obj.value[path[0]] = rhs
-        return obj
-    else:
-        obj.value[path[0]] = set_nested_value(obj.value[path[0]], path[1:], rhs)
-        return obj
+class LoopControl(Exception):
+    def __init__(self, kind: str):
+        self.kind = kind
+
+
+class ReturnControl(Exception):
+    def __init__(self, value: Atom):
+        self.value = value
+
+
+def condition_value(expression: Node, env: Environment) -> bool:
+    value = evaluate_expression(expression, env)
+    if not isinstance(value, ValueAtom) or value.type != "bool":
+        raise MiniError("Runtime", "Condition must evaluate to a bool", expression.location)
+    return value.value
+
+
+def iteration_values(value: Atom):
+    if isinstance(value, ValueAtom):
+        if value.type in ["list", "tuple"]:
+            return iter(value.value)
+        if value.type in ["string", "map"]:
+            return (ValueAtom("string", item) for item in value.value)
+        if value.type == "unit":
+            return iter(())
+    raise Exception("For loop expects a list, tuple, string or map")
+
 
 # Evaluation functions
 
 def evaluate_expression(expression: Node, env: Environment) -> Atom:
+    try:
+        return _evaluate_expression(expression, env)
+    except (MiniError, LoopControl, ReturnControl):
+        raise
+    except Exception as error:
+        raise MiniError("Runtime", str(error), expression.location) from None
+
+
+def _evaluate_expression(expression: Node, env: Environment) -> Atom:
     if isinstance(expression, AtomicNode):
         if is_identifier(expression):
             dprint(f"Evaluating identifier '{expression.raw_str()}'")
@@ -104,34 +128,50 @@ def evaluate_expression(expression: Node, env: Environment) -> Atom:
         for key, value in expression.pairs.items():
             if not isinstance(key, AtomicNode):
                 raise Exception(f"Key in map is not an atomic value")
-            if key.type == "number" and key.value.is_integer():
-                key.value = int(key.value)
-                key.type = "integer"
-            if key.type not in ["identifier", "string", "integer", "bool"]:
-                raise Exception(f"Key in map is not an identifier, string, integer or bool")
+            if key.type not in ["identifier", "string", "number", "bool"]:
+                raise Exception("Key in map must be an identifier, string, integer or bool")
+            if key.type == "number":
+                integer_value(ValueAtom(key.type, key.value), "Map literal key")
+            key_text = str(key.value) if key.type == "identifier" else ValueAtom(key.type, key.value).raw_str()
             value = evaluate_expression(value, env)
-            map_values[str(key.value)] = value
+            map_values[key_text] = value
         return ValueAtom("map", map_values)
     elif isinstance(expression, BlockNode):
         return evaluate_expressions(expression.expressions, Environment(f"<block>", env))
     elif isinstance(expression, LambdaNode):
         return FunctionAtom(expression.params, expression.body, env)
     elif isinstance(expression, IfNode):
-        cond = evaluate_expression(expression.condition, env)
-        if not isinstance(cond, ValueAtom) or not cond.type == "bool":
-            raise Exception(f"Condition does not evaluate to a bool")
-        if cond.value:
+        if condition_value(expression.condition, env):
             return evaluate_expression(expression.ifBody, env)
-        else:
-            # Iterate over the else-ifs
-            for cond, body in expression.elseIfs:
-                cond = evaluate_expression(cond, env)
-                if not isinstance(cond, ValueAtom) or not cond.type == "bool":
-                    raise Exception(f"Condition does not evaluate to a bool")
-                if cond.value:
-                    return evaluate_expression(body, env)
-            # Evaluate the else body
+        for condition, body in expression.elseIfs:
+            if condition_value(condition, env):
+                return evaluate_expression(body, env)
+        if expression.elseBody is not None:
             return evaluate_expression(expression.elseBody, env)
+        return ValueAtom("unit", None)
+    elif isinstance(expression, WhileNode):
+        while condition_value(expression.condition, env):
+            try:
+                evaluate_expression(expression.body, Environment("<while>", env))
+            except LoopControl as signal:
+                if signal.kind == "break":
+                    break
+        return ValueAtom("unit", None)
+    elif isinstance(expression, ForNode):
+        values = iteration_values(evaluate_expression(expression.iterable, env))
+        for value in values:
+            iteration = Environment("<for>", env)
+            iteration.define(expression.variable, value)
+            try:
+                evaluate_expression(expression.body, iteration)
+            except LoopControl as signal:
+                if signal.kind == "break":
+                    break
+        return ValueAtom("unit", None)
+    elif isinstance(expression, ControlNode):
+        if expression.kind == "return":
+            raise ReturnControl(evaluate_expression(expression.value, env))
+        raise LoopControl(expression.kind)
     elif isinstance(expression, UnaryNode):
         op = expression.operator
         rhs = evaluate_expression(expression.rhs, env)
@@ -150,19 +190,22 @@ def evaluate_expression(expression: Node, env: Environment) -> Atom:
                 rhs = evaluate_expression(expression.right, env)
                 env.set(expression.left.value, rhs)
                 return rhs
-            elif is_identifier_members(expression.left) or is_index_expression(expression.left):
-                op = "DOT" if is_identifier_members(expression.left) else "INDEX"
+            elif isinstance(expression.left, BinaryNode) and expression.left.operator in ["DOT", "INDEX"]:
+                target = expression.left
                 rhs = evaluate_expression(expression.right, env)
-                base = get_left_most_bin_term(expression.left, op)
-                if is_identifier(base):
-                    obj = env.get(base.value)
-                    if obj is None: raise Exception(f"Object '{base.value}' is not defined")
-                    path = flatten_bin_terms(expression.left, op, False)
-                    obj = set_nested_value(obj, path, rhs)
-                    env.set(base.value, obj)
-                    return rhs
-                else:
-                    raise Exception(f"Cannot set member of non-identifer values")
+                container = evaluate_expression(target.left, env)
+                if isinstance(target.right, SliceNode):
+                    raise Exception("Slice assignment is not supported in v1")
+                key = (ValueAtom("string", target.right.value) if target.operator == "DOT"
+                       else evaluate_expression(target.right, env))
+                key = index_key(container, key)
+                if container.type not in ["list", "map"]:
+                    raise Exception("Only lists and maps support index assignment")
+                try:
+                    container.value[key] = rhs
+                except IndexError:
+                    raise Exception(f"List index {key} is out of range") from None
+                return rhs
             elif isinstance(expression.left, BinaryNode) and expression.left.operator == "CALL":
                 # Function declaration 
                 functionName = expression.left.left
@@ -184,7 +227,7 @@ def evaluate_expression(expression: Node, env: Environment) -> Atom:
                 env.set(functionName.value, value)
                 return value
             else:
-                raise Exception(f"Invalid assignment, left hand side is not an identifier, function or valid pattern")
+                raise Exception(f"Invalid assignment: expected an identifier, function declaration, or list/map member")
 
         lhs = evaluate_expression(expression.left, env)
         if op == "DOT":
@@ -198,7 +241,18 @@ def evaluate_expression(expression: Node, env: Environment) -> Atom:
                 if expression.right.value not in lhs.value:
                     raise Exception(f"Map does not contain key '{expression.right.value}'")
                 return lhs.value[expression.right.value]
-            raise Exception(f"Cannot access member of {lhs.type}, not implemented yet")
+            raise Exception(f"Member access on {lhs.type} is not supported in v1; use free functions such as list_size(items)")
+        elif op == "CALL":
+            # Preserve argument boundaries: f((1, 2)) has one tuple argument.
+            args = [evaluate_expression(arg, env) for arg in expression.right.elements]
+            return evaluate_call(lhs, args)
+        elif op in ["AND", "OR"]:
+            compatible_type(lhs, ["bool"])
+            if (op == "AND" and not lhs.value) or (op == "OR" and lhs.value):
+                return lhs
+            rhs = evaluate_expression(expression.right, env)
+            compatible_type(rhs, ["bool"])
+            return rhs
         elif op == "INDEX" and isinstance(expression.right, SliceNode): # Slice indexing
             # Evaluate the slice indices
             start = evaluate_expression(expression.right.start, env)
@@ -206,10 +260,11 @@ def evaluate_expression(expression: Node, env: Environment) -> Atom:
             step = ValueAtom("number", 1)
             if expression.right.step is not None:
                 step = evaluate_expression(expression.right.step, env)
-            # Check that the slice indices are integers
-            if not compatible_types(start, end, ["number"]) or not compatible_type(step, ["number"]):
-                raise Exception(f"Slice indices must be integers")
-            start, end, step = int(start.value), int(end.value), int(step.value)
+            start = integer_value(start, "Slice start")
+            end = integer_value(end, "Slice end")
+            step = integer_value(step, "Slice step")
+            if step == 0:
+                raise Exception("Slice step must not be zero")
             if compatible_type(lhs, ["list", "tuple"]):
                 lhs_slice = lhs.value[start:end:step]
                 element = None
@@ -287,34 +342,18 @@ def evaluate_binary_atom_expression(op: str, lhs: Atom, rhs: Atom, env: Environm
         return ValueAtom("bool", lhs.value and rhs.value)
     elif op == "OR" and compatible_types(lhs, rhs, ["bool"]):
         return ValueAtom("bool", lhs.value or rhs.value)
-    elif op == "RANGE" and compatible_types(lhs, rhs, ["number"]):
-        return ValueAtom("list", [ValueAtom("number", i) for i in range(lhs.value, rhs.value)])
-    elif op == "INDEX" and compatible_type(lhs, ["list", "tuple", "map"]):
-        if not isinstance(rhs, ValueAtom):
-            raise Exception(f"Indexing expression in not a valid value type: {rhs}")
-        if rhs.type in ["number", "string", "bool"]:
-            if lhs.type == "list" or lhs.type == "tuple":
-                element: Atom = lhs.value[rhs.value]
-            elif lhs.type == "map":
-                index = rhs.raw_str()
-                if index not in lhs.value:
-                    print(lhs.value)
-                    raise Exception(f"Map does not contain key '{index}'")
-                element: Atom = lhs.value[index]
-            dprint(f"Indexing {lhs.type}: {lhs.formatted_str()} with index {rhs.formatted_str()} -> {element.formatted_str()}")
-            return element
-        else:
-            raise Exception(f"Indexing expression does not evaluate to an integer or string")
-    elif op == "CALL":
-        # The tuple may have been evaluated to a single value
-        args = [rhs]
-        if isinstance(rhs, ValueAtom):
-            if rhs.type == "tuple":
-                args: list[Atom] = rhs.value
-            elif rhs.type == "unit":
-                args = []
-        # args = list(map(lambda e: evaluate_expression(e, env), rhs.value))
-        return evaluate_call(lhs, args)
+    elif op == "RANGE":
+        start = integer_value(lhs, "Range bound")
+        end = integer_value(rhs, "Range bound")
+        return ValueAtom("list", [ValueAtom("number", i) for i in range(start, end)])
+    elif op == "INDEX":
+        key = index_key(lhs, rhs)
+        try:
+            return lhs.value[key]
+        except IndexError:
+            raise Exception(f"{lhs.type.capitalize()} index {key} is out of range") from None
+        except KeyError:
+            raise Exception(f"Map does not contain key '{key}'") from None
 
     return None
 
@@ -333,8 +372,14 @@ def evaluate_function_atom_call(function: FunctionAtom, args: list[Atom]) -> Ato
     if len(args) != len(function.argumentNames):
         raise Exception(f"Function '{function.name}' expects {len(function.argumentNames)} arguments, but got {len(args)}")
     for name, val in zip(function.argumentNames, args):
-        funcEnv.set(name, val)
-    return evaluate_expression(function.body, funcEnv)
+        funcEnv.define(name, val)
+    try:
+        return evaluate_expression(function.body, funcEnv)
+    except ReturnControl as signal:
+        return signal.value
+    except LoopControl as signal:
+        # Defensive boundary for ASTs supplied through the embedding API.
+        raise Exception(f"'{signal.kind}' cannot cross a function boundary") from None
 
 def evaluate_expressions(expressions: list[Node], env: Environment) -> Atom:
     """

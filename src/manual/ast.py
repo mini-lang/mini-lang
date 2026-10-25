@@ -7,6 +7,11 @@ class Node():
         Initialize a node with a name
         """
         self.name = name
+        self.location = None
+
+    def at(self, token):
+        self.location = token
+        return self
 
     def __str__(self):
         return self.formatted_str()
@@ -202,3 +207,25 @@ class IfNode(Node):
         self.ifBody = ifBody
         self.elseBody = elseBody
         self.elseIfs = elseIfs
+
+
+class WhileNode(Node):
+    def __init__(self, condition: Node, body: Node):
+        super().__init__("While")
+        self.condition = condition
+        self.body = body
+
+
+class ForNode(Node):
+    def __init__(self, variable: str, iterable: Node, body: Node):
+        super().__init__("For")
+        self.variable = variable
+        self.iterable = iterable
+        self.body = body
+
+
+class ControlNode(Node):
+    def __init__(self, kind: str, value: Node = None):
+        super().__init__(kind)
+        self.kind = kind
+        self.value = value

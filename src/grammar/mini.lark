@@ -1,3 +1,7 @@
+// EXPERIMENTAL DESIGN ONLY: not loaded by mini.py.
+// The active parser is src/manual/parser.py. See docs/v1.md for the v1 contract
+// and differences (newlines, colon bodies, ranges and deferred features).
+
 // ============================================================================
 // mini.lark
 //

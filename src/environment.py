@@ -16,6 +16,16 @@ class Environment():
         self.values: dict[str, Atom] = {}
 
     def set(self, name: str, value: Atom) -> None:
+        scope = self
+        while scope.parent is not None and name not in scope.values:
+            scope = scope.parent
+        if name in scope.values:
+            scope.values[name] = value
+        else:
+            self.define(name, value)
+
+    def define(self, name: str, value: Atom) -> None:
+        """Bind locally, even when a parameter/iteration name shadows an outer name."""
         self.values[name] = value
 
     def get(self, name: str):
