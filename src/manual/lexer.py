@@ -1,11 +1,13 @@
 from io import TextIOBase
 
+from ..error import MiniError
+
 # Token class
 class Token():
     """
     The smallest unit of the language.
     """
-    def __init__(self, name: str, line, column, value = None):
+    def __init__(self, name: str, line, column, value = None, source = "<input>"):
         """
         Initialize a token with a name and a value.
         """
@@ -13,6 +15,7 @@ class Token():
         self.value = value
         self.line = line
         self.column = column
+        self.source = source
 
     def __str__(self):
         """
@@ -24,6 +27,9 @@ class Token():
 class Lexer:
     def __init__(self, source: TextIOBase, debug = False):
         self.__source = source
+        self.__source_name = str(getattr(source, "name", "<input>"))
+        self.__token_line = 1
+        self.__token_column = 1
         self.__process_queue: list[str] = [] # FIFO Queue of chars that have been read but not yet processed
         self.__line = 1
         self.__column = 1
@@ -43,13 +49,13 @@ class Lexer:
         """
         Create a token with the given name and value.
         """
-        return Token(name, self.__line, self.__column, value)
+        return Token(name, self.__token_line, self.__token_column, value, self.__source_name)
 
     def __error(self, msg: str):
         """
         Raise an error with the given message.
         """
-        raise Exception(f"Syntax Error at {self.__line}:{self.__column}: {msg}")
+        raise MiniError("Lexical", msg, self.__token("ERROR"))
 
     # Tokenizer functions
     def __can_read(self) -> bool:
@@ -96,8 +102,6 @@ class Lexer:
         if c == '\n':
             self.__line += 1
             self.__column = 1
-        elif c == '\t':
-            self.__column += 4
         else:
             self.__column += 1
         self.__prev_char = c
@@ -150,6 +154,8 @@ class Lexer:
         """
         s = ""
         while self.__can_read():
+            if self.__peek_char() == '\0':
+                self.__error("Unterminated string")
             c = self.__expect_char("string content, escape sequence, or closing quote")
             if c == quote:
                 return self.__token("STRING", s)
@@ -202,8 +208,7 @@ class Lexer:
         s = first
         decimalPoint = False
         nc = self.__peek_char()
-        nnc = self.__peek_char(1)
-        while (nc.isdigit() or nc == '.') and not (nc == '.' and nnc == '.'):
+        while nc.isdigit() or (nc == '.' and self.__peek_char(1).isdigit()):
             if nc == '.':
                 if decimalPoint:
                     break
@@ -213,7 +218,10 @@ class Lexer:
                 nc = self.__peek_char()
             else:
                 break
-        value = float(s)
+        try:
+            value = float(s)
+        except ValueError:
+            self.__error(f"Invalid number literal: {s}")
         value = int(value) if value.is_integer() else value
         return self.__token("NUMBER", value)
 
@@ -229,14 +237,14 @@ class Lexer:
         Token
             The next token from the source stream.
         """
-        pc = self.__prev_char
-        c = self.__next_char()
-        if c in ['', '\0', None]: return self.__token("EOF")
+        while True:
+            pc = self.__prev_char
+            self.__token_line, self.__token_column = self.__line, self.__column
+            c = self.__next_char()
+            if c not in [' ', '\t', '\n', '\r']:
+                break
+        if c in ['', None]: return self.__token("EOF")
         nc = self.__peek_char() # Look ahead one character: LL(1)
-
-        # Whitespace
-        if c in [' ', '\t', '\n', '\r']:
-            return self.__read_token() # Skip whitespace
         if c in ['"', "'"]:
             return self.__read_string(c)
         if c.isdigit():
@@ -245,7 +253,7 @@ class Lexer:
             t = self.__read_identifier(c)
             if t.value in ["true", "false"]:
                 return self.__token("BOOL", t.value == "true")
-            if t.value in ["if", "else", "match", "class", "enum", "while", "for", "break", "continue", "return"]:
+            if t.value in ["if", "else", "match", "class", "enum", "while", "for", "break", "continue", "return", "import", "none"]:
                 return self.__token("KEYWORD", t.value)
             if t.value in ["and", "or", "not", "is", "in"]:
                 return self.__token(t.value.upper(), t.value)
@@ -253,13 +261,15 @@ class Lexer:
         if c == '/' and nc == '/':
             self.__expect_char("single line comment start")
             comment = ""
-            while self.__can_read() and self.__peek_char() != '\n':
+            while self.__can_read() and self.__peek_char() not in ['\n', '\0']:
                 comment += self.__expect_char("comment content")
             return self.__token("COMMENT", comment)
         if c == '/' and nc == '*':
             self.__expect_char("multi line comment start")
             comment = ""
             while self.__can_read():
+                if self.__peek_char() == '\0':
+                    self.__error("Unterminated block comment")
                 c = self.__expect_char("comment content")
                 if c == '*' and self.__peek_char() == '/':
                     self.__expect_char("multi line comment end")
@@ -362,9 +372,9 @@ class Lexer:
             return t
         else:
             t = self.__read_token()
-            if not allow_comment and t.name == "COMMENT":
+            while not allow_comment and t.name == "COMMENT":
                 self.__prev_comment = t
-                return self.next_token(False)
+                t = self.__read_token()
             self.__dprint("  " + str(t))
             return t
 

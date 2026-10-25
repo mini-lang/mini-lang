@@ -37,7 +37,7 @@ def init_util(env: Environment):
     def _assert(args: list[Atom]) -> Atom:
         expect_args(args, [1, 2], "assert")
         if not args[0].value:
-            raise Exception(args[1].raw_str())
+            raise Exception(args[1].raw_str() if len(args) == 2 else "Assertion failed")
         return ValueAtom("unit", None)
     addBuiltin("exit", _exit, env)
     addBuiltin("assert", _assert, env)

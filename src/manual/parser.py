@@ -1,6 +1,7 @@
 # Parser class
 from .lexer import Lexer, Token
-from .ast import AtomicNode, BinaryNode, BlockNode, IfNode, LambdaNode, ListNode, MapNode, Node, ProgramNode, SliceNode, TupleNode, UnaryNode
+from ..error import MiniError
+from .ast import AtomicNode, BinaryNode, BlockNode, IfNode, LambdaNode, ListNode, MapNode, Node, ProgramNode, SliceNode, TupleNode, UnaryNode, WhileNode, ForNode, ControlNode
 
 # Left associative infix operators binding powers
 precedence_left = {
@@ -22,7 +23,7 @@ precedence_left = {
     'GREATEREQUAL': 60,
     'NOTEQUAL': 60,
     'EQUAL':    60,
-    'PLUSEQUAL': 50,
+    'PLUSEQUAL': 20,
     'MINUSEQUAL': 50,
     'TIMESEQUAL': 50,
     'DIVEQUAL': 50,
@@ -38,6 +39,8 @@ class Parser:
     def __init__(self, lexer: Lexer, debug = False):
         self.lexer = lexer
         self.debug = debug
+        self.loop_depth = 0
+        self.function_depth = 0
 
     # Helper functions
     def __dprint(self, *args):
@@ -51,7 +54,7 @@ class Parser:
         """
         Raise an error with the given message.
         """
-        raise Exception(f"Semantic Error at {token.line}:{token.column}: {msg}")
+        raise MiniError("Syntax", msg, token)
 
     def __expect(self, token_name: str):
         """
@@ -59,7 +62,7 @@ class Parser:
         """
         t = self.lexer.next_token()
         if t.name != token_name:
-            raise Exception(f"Expected {token_name} but got {t.name}")
+            self.__error(f"Expected {token_name} but got {t.name}", t)
         return t
 
     # Tokenizer functions
@@ -73,6 +76,8 @@ class Parser:
         expressions = []
         nt = self.lexer.peek_token()
         while nt.name != end_delimiter:
+            if nt.name == "EOF":
+                self.__error(f"Expected {end_delimiter} before end of input", nt)
             expressions.append(self.__parse_expression())
             nt = self.lexer.peek_token()
             # Check for the delimiter after an expression
@@ -95,6 +100,8 @@ class Parser:
         expressions = []
         nt = self.lexer.peek_token()
         while nt.name != end_delimiter:
+            if nt.name == "EOF":
+                self.__error(f"Expected {end_delimiter} before end of input", nt)
             expressions.append(self.__parse_expression())
             nt = self.lexer.peek_token()
         self.lexer.next_token()
@@ -106,19 +113,27 @@ class Parser:
         """
         result = []
         for e in nodes:
-            if not (isinstance(e, AtomicNode) or e.type == "identifier"):
-                raise Exception(f"Lambda argument '{e}' is not an identifier!")
+            if not (isinstance(e, AtomicNode) and e.type == "identifier"):
+                self.__error("Function parameter must be an identifier", e.location)
+            if e.value in result:
+                self.__error(f"Duplicate parameter '{e.value}'", e.location)
             result.append(e.value)
         return result
 
     def __parse_primary(self) -> Node:
+        token = self.lexer.peek_token()
+        node = self.__parse_primary_value()
+        if node.location is None:
+            node.at(token)
+        return node
+
+    def __parse_primary_value(self) -> Node:
         """
         Parse a primary expression from the lexer.
         """
-        prev_comment = self.lexer.prev_comment()
         t = self.lexer.next_token()
         if t.name in ["IDENTIFIER", "STRING", "NUMBER", "BOOL"]:
-            value = AtomicNode(t.name.lower(), t.value)
+            value = AtomicNode(t.name.lower(), t.value).at(t)
             nt = self.lexer.peek_token()
             if nt.name == "RIGHTARROW":
                 return self.__parse_lambda([value])
@@ -127,7 +142,29 @@ class Parser:
         elif t.name == "KEYWORD":
             match t.value:
                 case "if": return self.__parse_if()
-                case _: raise Exception(f"Keyword '{t.value}' is not implemented!")
+                case "while":
+                    condition = self.__parse_expression()
+                    return WhileNode(condition, self.__parse_loop_body())
+                case "for":
+                    if self.lexer.peek_token().name != "IDENTIFIER":
+                        self.__error("Expected IDENTIFIER for for binding; patterns are not supported in v1", self.lexer.peek_token())
+                    variable = self.__expect("IDENTIFIER")
+                    self.__expect("IN")
+                    iterable = self.__parse_expression()
+                    return ForNode(variable.value, iterable, self.__parse_loop_body())
+                case "break" | "continue":
+                    if not self.loop_depth:
+                        self.__error(f"'{t.value}' is only valid inside a loop body in the same function", t)
+                    return ControlNode(t.value)
+                case "return":
+                    if not self.function_depth:
+                        self.__error("'return' is only valid inside a function", t)
+                    if self.lexer.peek_token().name in ["EOF", "RBRACE"]:
+                        self.__error("Return requires a value; use 'return ()' for unit", t)
+                    return ControlNode("return", self.__parse_expression())
+                case "none": self.__error("'none' is not supported in v1; use () for unit", t)
+                case "else": self.__error("Unexpected 'else' without a matching if", t)
+                case _: self.__error(f"Keyword '{t.value}' is not supported in v1", t)
         elif t.name == "LPAREN":
             lhs = TupleNode(self.__parse_list_of_expressions("COMMA", "RPAREN", False))
             # Check for trailing right arrow
@@ -145,8 +182,14 @@ class Parser:
         elif t.name == "LBRACE":
             return BlockNode(self.__parse_expressions_until("RBRACE"))
         elif t.name in ["MINUS", "NOT"]:
-            return UnaryNode(t.name, self.__parse_primary())
+            return UnaryNode(t.name, self.__parse_binary_expression(self.__parse_primary(), precedence_left["CALL"]))
         else:
+            if t.name == "COLON":
+                self.__error("Colon bodies are not supported in v1; use braces", t)
+            if t.name == "SEMICOLON":
+                self.__error("Semicolons are not supported in v1; use whitespace", t)
+            if t.name in ["BITWISEAND", "BITWISEOR", "BITWISENOT", "IS", "IN", "QUESTIONMARK"]:
+                self.__error(f"Operator '{t.value}' is not supported in v1", t)
             self.__error(f"Expected primary expression but got '{t.name}'", t)
 
     def __parse_lambda(self, args: list[Node]) -> LambdaNode:
@@ -158,22 +201,42 @@ class Parser:
         # And add them to a list of argument names
         params = self.__ident_list_to_str(args)
         # Parse the body of the lambda
-        body = self.__parse_expression()
+        body = self.__parse_function_body()
         return LambdaNode(params, body)
 
+    def __parse_loop_body(self) -> Node:
+        self.loop_depth += 1
+        try:
+            return self.__parse_expression()
+        finally:
+            self.loop_depth -= 1
+
+    def __parse_function_body(self) -> Node:
+        # A function declared in a loop cannot break/continue its caller's loop.
+        outer_loop_depth = self.loop_depth
+        self.loop_depth = 0
+        self.function_depth += 1
+        try:
+            return self.__parse_expression()
+        finally:
+            self.function_depth -= 1
+            self.loop_depth = outer_loop_depth
+
     def __parse_binary_expression(self, lhs: Node, precedence: int) -> Node:
-        """
-        Parse a binary expression from the lexer.
-        Should only be called from within `__parse_binary_expression` itself.
-        Ref: https://en.wikipedia.org/wiki/Operator-precedence_parser#Pratt_parsing
-        """
-        l = self.lexer.peek_token().name
-        while (l in precedence_left and precedence_left[l] >= precedence):
-            op = self.lexer.next_token().name
+        """Precedence climbing, with right-associative assignment."""
+        while True:
+            token = self.lexer.peek_token()
+            op = token.name
+            if op in ["BITWISEAND", "BITWISEOR", "BITWISENOT", "IS", "IN",
+                      "MINUSEQUAL", "TIMESEQUAL", "DIVEQUAL", "MODEQUAL", "POWEQUAL", "QUESTIONMARK"]:
+                self.__error(f"Operator '{token.value}' is not supported in v1", token)
+            if op not in precedence_left or precedence_left[op] < precedence:
+                return lhs
+            self.lexer.next_token()
+            if op == "RANGE" and self.lexer.peek_token().name in ["EOF", "LBRACE", "RBRACE", "RPAREN", "RBRACKET", "COMMA"]:
+                self.__error("Range requires both bounds; open-ended ranges are not supported in v1", token)
             if op == "INDEX":
-                self.__dprint(f"Parsing indexing expression")
                 rhs = self.__parse_expression()
-                # Check if range index
                 if self.lexer.peek_token().name == "COLON":
                     self.lexer.next_token()
                     end = self.__parse_expression()
@@ -181,24 +244,23 @@ class Parser:
                     if self.lexer.peek_token().name == "COLON":
                         self.lexer.next_token()
                         step = self.__parse_expression()
-                    rhs = SliceNode(rhs, end, step)
+                    rhs = SliceNode(rhs, end, step).at(token)
                 self.__expect("RBRACKET")
-            elif op == 'CALL':
+            elif op == "CALL":
                 rhs = TupleNode(self.__parse_list_of_expressions("COMMA", "RPAREN", False))
-                # if self.lexer.peek_token().name == "ASSIGNMENT":
-                #     self.lexer.next_token() # Remove the assignment
-                #     rhs = self.__parse_expression()
-                #     # Convert args to list of strings
-                #     args = self.__ident_list_to_str(args)
-                #     return AssignmentNode(t.value, LambdaNode(args, rhs), prev_comment)
+            elif op == "DOT":
+                member = self.__expect("IDENTIFIER")
+                rhs = AtomicNode("identifier", member.value).at(member)
+            elif op == "ASSIGNMENT" and isinstance(lhs, BinaryNode) and lhs.operator == "CALL":
+                if not isinstance(lhs.left, AtomicNode) or lhs.left.type != "identifier":
+                    self.__error("Function name must be an identifier", token)
+                self.__ident_list_to_str(lhs.right.elements)
+                rhs = self.__parse_function_body()
             else:
-                rhs = self.__parse_primary()
-            l = self.lexer.peek_token().name
-            while l in precedence_left and precedence_left[l] > precedence_left[op]:
-                rhs = self.__parse_binary_expression(rhs, precedence_left[l])
-                l = self.lexer.peek_token().name
-            lhs = BinaryNode(op, lhs, rhs)
-        return lhs
+                # Assignment chains bind right; arithmetic binds left.
+                minimum = precedence_left[op] + (0 if op == "ASSIGNMENT" else 1)
+                rhs = self.__parse_binary_expression(self.__parse_primary(), minimum)
+            lhs = BinaryNode(op, lhs, rhs).at(token)
 
     def __parse_hash_map(self) -> MapNode:
         """
@@ -212,7 +274,7 @@ class Parser:
             self.__expect("COLON")
             value = self.__parse_expression()
             if key in pairs:
-                raise Exception(f"Duplicate key '{key}' in hash map!")
+                self.__error(f"Duplicate key '{key}' in hash map", key.location)
             pairs[key] = value
             nt = self.lexer.peek_token()
             if nt.name == "COMMA":
@@ -223,27 +285,14 @@ class Parser:
         return MapNode(pairs)
 
     def __parse_if(self) -> IfNode:
-        """
-        Parse an if expression from the lexer.
-        """
-        cond = self.__parse_expression()
-        ifBody = self.__parse_expression()
-        elseIfs = []
-        elseBody = None
-        nt = self.lexer.peek_token()
-        while nt.name == "KEYWORD" and nt.value == "else":
-            self.lexer.next_token() # Remove the else keyword
-            # Peek and see if the next token is a chained if expression
-            nt = self.lexer.peek_token()
-            if nt.name == "KEYWORD" and nt.value == "if":
-                self.lexer.next_token() # Remove the if keyword
-                elseIfCond = self.__parse_expression()
-                elseIfBody = self.__parse_expression()
-                elseIfs.append((elseIfCond, elseIfBody))
-            else:
-                elseBody = self.__parse_expression()
-                break
-        return IfNode(cond, ifBody, elseIfs, elseBody)
+        condition = self.__parse_expression()
+        body = self.__parse_expression()
+        otherwise = None
+        token = self.lexer.peek_token()
+        if token.name == "KEYWORD" and token.value == "else":
+            self.lexer.next_token()
+            otherwise = self.__parse_expression()
+        return IfNode(condition, body, [], otherwise)
 
     def __parse_expression(self) -> Node:
         """

@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 from io import StringIO
-import os
 import sys
 import webbrowser
 from src.atoms import ValueAtom
-from src.error import print_error_help
+from src.error import MiniError, print_error, print_error_help
 from src.colors import BOLD, BRIGHT_YELLOW, GREEN, LOGO, RESET
 from src.interpreter import execute, globalEnvironment
 
@@ -53,7 +52,7 @@ def main(args: list):
 
     # Interpret file
     if len(args) == 1:
-        interpret(args[-1], debug)
+        return interpret(args[-1], debug)
     elif len(args) > 1:
         print_error_help("Too many arguments, expected a single file!")
     else:
@@ -61,10 +60,17 @@ def main(args: list):
 
 # Interpreter mode
 def interpret(filepath: str, debug = False):
-    if not os.path.exists(filepath):
-        print_error_help(f"File '{filepath}' does not exist!")
-    with open(filepath, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True) as f:
-        _ = execute(f, globalEnvironment(), debug)
+    try:
+        with open(filepath, encoding="utf-8") as source:
+            execute(source, globalEnvironment(), debug)
+        return 0
+    except (MiniError, OSError, UnicodeError) as error:
+        if debug:
+            import traceback
+            traceback.print_exc()
+        else:
+            print_error(error)
+        return 1
 
 # Repl mode
 def repl(debug = False):
@@ -74,23 +80,22 @@ def repl(debug = False):
         try:
             line = input("> ").strip()
         except EOFError:
-            continue
+            break
         except KeyboardInterrupt:
             break
         if line == "":
             continue
         try:
             result = execute(StringIO(line), env, debug)
-            if result is None: continue
             value, env = result
             if isinstance(value, ValueAtom) and value.type == "unit": continue
             print(value.formatted_str())
-        except Exception as e:
+        except MiniError as e:
             if debug:
                 import traceback
                 traceback.print_exc()
             else:
-                print(e)
+                print_error(e)
 
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    sys.exit(main(sys.argv[1:]))

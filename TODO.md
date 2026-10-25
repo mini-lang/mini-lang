@@ -8,13 +8,14 @@ count as implemented features.
 
 - [x] Record supported syntax and run README examples automatically.
 - [x] Exercise every example file, including Unicode and scripted input.
-- [ ] Add `while`, `for`, scoped iteration variables, `break` and `continue` (#6).
-- [ ] Add function-only `return` and reject invalid control flow (#6).
-- [ ] Define assignment to enclosing scopes; preserve local parameters.
-- [ ] Fix false `if` without `else` and short-circuit boolean operators.
-- [ ] Report lexical, syntax and runtime errors with source locations.
-- [ ] Return nonzero CLI status on program errors; keep the REPL usable after errors.
-- [ ] Align the companion website/tutorial with verified v1 behavior.
+- [x] Add `while`, `for`, scoped iteration variables, `break` and `continue` (#6).
+- [x] Add function-only `return` and reject invalid control flow (#6).
+- [x] Define assignment to enclosing scopes; preserve local parameters.
+- [x] Fix chained `else if`, false `if` without `else`, and short-circuit logic.
+- [x] Preserve tuple/unit call arguments; validate function parameters.
+- [x] Report lexical, syntax and runtime errors with source locations.
+- [x] Return nonzero CLI status on program errors; keep the REPL usable after errors.
+- [x] Align the companion website/tutorial with verified v1 behavior.
 
 ## Deferred beyond v1
 

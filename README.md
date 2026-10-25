@@ -61,7 +61,9 @@ expressions. Comments use `//` or `/* ... */`.
 ### Blocks and functions
 
 A block evaluates to its last expression; an empty block evaluates to `()`.
-New names inside a block stay local. Functions capture their defining environment,
+New names inside a block stay local; assignment to an existing name updates its
+nearest enclosing binding. Function parameters always bind locally and shadow
+outer names. Functions capture their defining environment,
 accept fixed positional parameters, and return their body's value.
 
 ```mini
@@ -80,6 +82,8 @@ print(answer, add(1, 2), square(4))
 Use free functions such as `list_append(items, value)`, `list_size(items)`,
 `list_map(items, fn)` and `map_size(m)`, not methods such as `items.append(value)`.
 The conversion names are `str`, `number`, `int` and `bool` (not `string`).
+`number` and `int` return `()` on invalid text; `bool` recognizes the text
+`"true"` case-insensitively rather than applying general truthiness.
 `print`, `input`, `typeof` and `assert(condition, message)` are also available.
 The larger host-oriented library in `src/stdlib.py` remains experimental.
 
@@ -103,6 +107,8 @@ Ranges are **eager, ascending, end-exclusive integer lists**, like Python's
 the end and currently require both start and end (`items[1:3:2]`). Maps store
 string keys, including the string form of numeric and boolean literal keys.
 `(x)` groups an expression, `(x, y)` is a tuple, and `()` is unit.
+One-element tuple literals and slice assignment are not supported. Lists and
+maps support computed index assignment; tuples do not.
 
 ```mini
 print(1..4)
@@ -113,22 +119,80 @@ print(4..1)
 
 ### Control flow
 
-`if` is an expression with a boolean condition and optional `else`.
+`if` is an expression with a boolean condition and optional `else if` / `else`.
+A false `if` without an `else` evaluates to `()`. Boolean `and` and `or`
+short-circuit: they only evaluate the right operand when needed.
 
 ```mini
 x = 7
-label = if x >= 5 { "medium" } else { "small" }
+label = if x >= 10 { "large" } else if x >= 5 { "medium" } else { "small" }
 print(label)
 // => medium
 ```
 
-`while`, `for`, `break`, `continue` and function-only `return` are the remaining
-v1 work in the next change; see [the subset contract](docs/v1.md).
+`while` checks a boolean condition before each iteration. `for name in values`
+iterates list/tuple elements, string characters or map keys (in insertion order).
+The iterable is evaluated once. Both loops return `()`.
+
+```mini
+i = 0
+while i < 4 {
+    i += 1
+    if i == 2 { continue }
+    print(i)
+}
+for n in 1..5 {
+    if n == 3 { break }
+    print(n)
+}
+// => 1
+// => 3
+// => 4
+// => 1
+// => 2
+```
+
+Each iteration has a fresh local scope; the for variable shadows an outer name
+and does not leak. `break` and `continue` affect the nearest loop in the same
+function, including through nested blocks. Invalid control flow is rejected
+before execution, including in uncalled functions and unreachable branches.
+
+`return expression` exits the current function, including from inside loops.
+Use `return ()` for an explicit unit result. Return outside a function is an error;
+a plain block still evaluates to its final expression.
+
+```mini
+first_large(values) = {
+    for value in values {
+        if value > 5 { return value }
+    }
+    ()
+}
+print(first_large([1, 8, 9]), first_large([]))
+// => 8 ()
+```
+
+## Errors
+
+Program errors include the source name, one-based line and column, and error kind.
+Columns count characters (a tab counts as one). File execution reports errors on
+stderr and exits with status 1; success exits with status 0. `--debug` adds a
+Python traceback. The REPL recovers after each error and exits on EOF.
+
+Embedding callers can use `src.interpreter.execute(stream, env)`: it returns
+`(value, env)` on success and raises `src.error.MiniError` on a program error.
+It no longer prints errors or returns `None` on failure.
 
 ## Development
 
 Run `python test.py` for legacy tests, executable examples and the standard-library
 `unittest` suite. New tests go in `tests/test_*.py` and are discovered automatically.
+To check a sibling tutorial checkout as well, run:
+
+```sh
+MINI_TUTORIAL_DIR=../mini-lang.github.io python test.py
+```
+
 See [CONTRIBUTING.md](CONTRIBUTING.md). The companion website and tutorial live in
 [mini-lang.github.io](https://github.com/mini-lang/mini-lang.github.io).
 

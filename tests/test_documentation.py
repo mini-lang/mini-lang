@@ -16,7 +16,9 @@ class DocumentationTests(unittest.TestCase):
         paths = [ROOT / "README.md", *sorted((ROOT / "docs").rglob("*.md"))]
         # CI/users can check the companion checkout without a runtime dependency.
         if os.environ.get("MINI_TUTORIAL_DIR"):
-            paths.extend(sorted(Path(os.environ["MINI_TUTORIAL_DIR"]).rglob("*.md")))
+            tutorial = Path(os.environ["MINI_TUTORIAL_DIR"])
+            self.assertTrue(tutorial.is_dir(), f"Tutorial directory does not exist: {tutorial}")
+            paths.extend(sorted(tutorial.rglob("*.md")))
         count = 0
         for path in paths:
             for match in re.finditer(r"^```mini\n(.*?)^```", path.read_text(encoding="utf-8"), re.M | re.S):
