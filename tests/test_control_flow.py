@@ -20,6 +20,11 @@ class ControlFlowTests(unittest.TestCase):
         self.assert_value("i = 0 total = 0 while i < 4 { i += 1 total += i } total", 10)
         self.assert_value("i = 0 while (i < 3) i += 1 i", 3)
 
+    def test_conditions_with_unary_calls_and_indexes(self):
+        self.assert_value("i = 0 done() = i >= 3 while not done() { i += 1 } i", 3)
+        self.assert_value("if not [false][0] { 1 } else { 0 }", 1)
+        self.assert_value("negative = [2] result = -negative[0] result", -2)
+
     def test_empty_and_completed_loops_return_unit(self):
         for source in ["while false { missing }", "for x in [] { missing }",
                        "for x in () { missing }", "for x in [1] { 42 }",

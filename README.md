@@ -82,6 +82,8 @@ print(answer, add(1, 2), square(4))
 Use free functions such as `list_append(items, value)`, `list_size(items)`,
 `list_map(items, fn)` and `map_size(m)`, not methods such as `items.append(value)`.
 The conversion names are `str`, `number`, `int` and `bool` (not `string`).
+`number` and `int` return `()` on invalid text; `bool` recognizes the text
+`"true"` case-insensitively rather than applying general truthiness.
 `print`, `input`, `typeof` and `assert(condition, message)` are also available.
 The larger host-oriented library in `src/stdlib.py` remains experimental.
 
@@ -105,6 +107,8 @@ Ranges are **eager, ascending, end-exclusive integer lists**, like Python's
 the end and currently require both start and end (`items[1:3:2]`). Maps store
 string keys, including the string form of numeric and boolean literal keys.
 `(x)` groups an expression, `(x, y)` is a tuple, and `()` is unit.
+One-element tuple literals and slice assignment are not supported. Lists and
+maps support computed index assignment; tuples do not.
 
 ```mini
 print(1..4)
@@ -168,10 +172,27 @@ print(first_large([1, 8, 9]), first_large([]))
 // => 8 ()
 ```
 
+## Errors
+
+Program errors include the source name, one-based line and column, and error kind.
+Columns count characters (a tab counts as one). File execution reports errors on
+stderr and exits with status 1; success exits with status 0. `--debug` adds a
+Python traceback. The REPL recovers after each error and exits on EOF.
+
+Embedding callers can use `src.interpreter.execute(stream, env)`: it returns
+`(value, env)` on success and raises `src.error.MiniError` on a program error.
+It no longer prints errors or returns `None` on failure.
+
 ## Development
 
 Run `python test.py` for legacy tests, executable examples and the standard-library
 `unittest` suite. New tests go in `tests/test_*.py` and are discovered automatically.
+To check a sibling tutorial checkout as well, run:
+
+```sh
+MINI_TUTORIAL_DIR=../mini-lang.github.io python test.py
+```
+
 See [CONTRIBUTING.md](CONTRIBUTING.md). The companion website and tutorial live in
 [mini-lang.github.io](https://github.com/mini-lang/mini-lang.github.io).
 

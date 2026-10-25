@@ -13,9 +13,9 @@ count as implemented features.
 - [x] Define assignment to enclosing scopes; preserve local parameters.
 - [x] Fix chained `else if`, false `if` without `else`, and short-circuit logic.
 - [x] Preserve tuple/unit call arguments; validate function parameters.
-- [ ] Report lexical, syntax and runtime errors with source locations.
-- [ ] Return nonzero CLI status on program errors; keep the REPL usable after errors.
-- [ ] Align the companion website/tutorial with verified v1 behavior.
+- [x] Report lexical, syntax and runtime errors with source locations.
+- [x] Return nonzero CLI status on program errors; keep the REPL usable after errors.
+- [x] Align the companion website/tutorial with verified v1 behavior.
 
 ## Deferred beyond v1
 
